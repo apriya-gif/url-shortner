@@ -17,4 +17,5 @@ export interface GeminiSuggestion {
 
 export interface AppSettings {
   customBaseUrl?: string;
+  googleAnalyticsId?: string;
 }

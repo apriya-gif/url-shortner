@@ -1,19 +1,21 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { PlusIcon, MagnifyingGlassIcon, RocketLaunchIcon, ExclamationTriangleIcon, Cog6ToothIcon, ArrowPathIcon } from '@heroicons/react/24/outline';
+import { PlusIcon, MagnifyingGlassIcon, RocketLaunchIcon, ExclamationTriangleIcon, Cog6ToothIcon } from '@heroicons/react/24/outline';
 import { ShortLink, AppSettings } from './types';
 import { getLinks, saveLink, deleteLink, incrementClicks, getSettings, saveSettings } from './services/storage';
+import { initGA, trackRedirect } from './services/analytics';
 import { LinkCard } from './components/LinkCard';
 import { CreateLinkModal } from './components/CreateLinkModal';
 import { SettingsModal } from './components/SettingsModal';
 
 enum AppMode {
-  LOADING,
+  BOOTSTRAP,
   DASHBOARD,
-  REDIRECTING
+  REDIRECT_PROCESS,
+  NOT_FOUND
 }
 
 const App: React.FC = () => {
-  const [mode, setMode] = useState<AppMode>(AppMode.LOADING);
+  const [mode, setMode] = useState<AppMode>(AppMode.BOOTSTRAP);
   const [links, setLinks] = useState<ShortLink[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -28,74 +30,85 @@ const App: React.FC = () => {
   // --- INITIALIZATION SEQUENCE ---
   useEffect(() => {
     const initApp = async () => {
-      // 1. Load Settings
-      const loadedSettings = getSettings();
-      setSettings(loadedSettings);
-
-      // 2. Detect URL Environment
+      // 1. Environment Detection
       const fullLocation = window.location.href;
       const cleanBase = fullLocation.split('#')[0].split('?')[0];
+
       setDetectedUrl(cleanBase);
       setIsBlob(fullLocation.startsWith('blob:'));
 
-      // 3. Load Data (Merge LocalStorage + db.json)
-      // This allows the app to work on a static host (GitHub Pages) for recruiters
-      let mergedLinks = getLinks(); // Start with LocalStorage
+      // 2. Load Settings & Data
+      const loadedSettings = getSettings();
+      setSettings(loadedSettings);
+      
+      // Initialize Analytics if ID exists
+      if (loadedSettings.googleAnalyticsId) {
+        initGA(loadedSettings.googleAnalyticsId);
+      }
+      
+      // Load Data (Merge LocalStorage + db.json)
+      let mergedLinks = getLinks(); // LocalStorage
       
       try {
         const response = await fetch('./db.json');
         if (response.ok) {
           const staticLinks: ShortLink[] = await response.json();
-          // Merge logic: Create a map by ID. 
-          // If we have local data (User), it overrides static.
-          // If we are a Recruiter (no local data), we get static.
+          // Merge logic: Map by ID. Local storage (User edits) wins over static file.
           const linkMap = new Map<string, ShortLink>();
-          
           staticLinks.forEach(l => linkMap.set(l.id, l));
-          mergedLinks.forEach(l => linkMap.set(l.id, l)); // Local wins conflicts
-          
+          mergedLinks.forEach(l => linkMap.set(l.id, l)); 
           mergedLinks = Array.from(linkMap.values());
         }
       } catch (e) {
-        // If db.json is missing (local dev), just ignore
+        // Ignore missing db.json in local dev
       }
 
       // Sort by newest first
       mergedLinks.sort((a, b) => b.createdAt - a.createdAt);
       setLinks(mergedLinks);
 
-      // 4. Check for Redirect Hash
-      // We do this AFTER loading data so we can find links from db.json
+      // 3. Routing Logic
       const rawHash = window.location.hash.substring(1);
+      
       if (rawHash) {
+        // --- REDIRECT FLOW ---
         const hash = decodeURIComponent(rawHash);
         const match = mergedLinks.find(l => l.slug === hash);
         
         if (match) {
           setRedirectData({ target: match.originalUrl, slug: match.slug });
-          setMode(AppMode.REDIRECTING);
+          setMode(AppMode.REDIRECT_PROCESS);
           
-          // Execute Redirect
-          incrementClicks(match.id);
+          // Execute Redirect Actions
+          incrementClicks(match.id); // Update LocalStorage count (only visible to visitor)
+          
+          if (loadedSettings.googleAnalyticsId) {
+             trackRedirect(loadedSettings.googleAnalyticsId, match.slug, match.originalUrl);
+          }
+
+          // Small delay to ensure Analytics beacon is sent before unload
           setTimeout(() => {
              window.location.replace(match.originalUrl);
-          }, 800);
-          return; // Stop here, don't show dashboard
+          }, 150); 
+          return;
+        } else {
+          // Link found in hash but not in DB
+          setMode(AppMode.NOT_FOUND);
+          return;
         }
       }
 
-      // If no redirect, show dashboard
+      // --- NO HASH FLOW (DASHBOARD) ---
+      // We always show the dashboard if there is no hash. 
+      // User is responsible for not sharing the root URL if they want privacy.
       setMode(AppMode.DASHBOARD);
     };
 
     initApp();
 
-    // Listen for hash changes while the app is open
+    // Listen for hash changes
     const handleRuntimeHashChange = () => {
-       const rawHash = window.location.hash.substring(1);
-       if(!rawHash) return;
-       // Reload page to trigger full init cycle is safest, or just check links state
-       window.location.reload(); 
+       if(window.location.hash.substring(1)) window.location.reload(); 
     };
     window.addEventListener('hashchange', handleRuntimeHashChange);
     return () => window.removeEventListener('hashchange', handleRuntimeHashChange);
@@ -105,12 +118,8 @@ const App: React.FC = () => {
   // --- ACTIONS ---
 
   const refreshLinks = () => {
-    // We only refresh from LocalStorage here because db.json is static
-    // Ideally we would re-merge, but for local editing, local storage is enough.
     const local = getLinks();
     setLinks(prev => {
-        // Keep static links that aren't in local, update local ones
-        // This is a simplified merge for the UI update
         const linkMap = new Map<string, ShortLink>();
         prev.forEach(l => linkMap.set(l.id, l));
         local.forEach(l => linkMap.set(l.id, l));
@@ -121,6 +130,9 @@ const App: React.FC = () => {
   const handleSaveSettings = (newSettings: AppSettings) => {
     saveSettings(newSettings);
     setSettings(newSettings);
+    if (newSettings.googleAnalyticsId) {
+        initGA(newSettings.googleAnalyticsId);
+    }
   };
 
   const handleCreate = (newLink: ShortLink) => {
@@ -145,44 +157,39 @@ const App: React.FC = () => {
     );
   }, [links, searchQuery]);
 
-  // Use Custom URL if set, otherwise detected URL
   const baseUrl = settings.customBaseUrl || detectedUrl;
 
 
-  // --- RENDER: LOADING ---
-  if (mode === AppMode.LOADING) {
+  // --- RENDER: BOOTSTRAP ---
+  if (mode === AppMode.BOOTSTRAP) {
       return (
-          <div className="h-screen w-screen flex items-center justify-center bg-slate-50">
-              <ArrowPathIcon className="w-8 h-8 text-slate-400 animate-spin" />
-          </div>
+          <div className="h-screen w-screen bg-white" /> // Totally blank to avoid flash
       );
   }
 
-  // --- RENDER: REDIRECT MODE ---
-  if (mode === AppMode.REDIRECTING && redirectData) {
+  // --- RENDER: REDIRECT (INVISIBLE) ---
+  if (mode === AppMode.REDIRECT_PROCESS && redirectData) {
     return (
-      <div className="h-screen w-screen flex flex-col items-center justify-center bg-slate-50">
-        <div className="text-center space-y-6 animate-fade-in px-4">
-          <div className="w-20 h-20 bg-indigo-100 text-indigo-600 rounded-full flex items-center justify-center mx-auto animate-bounce shadow-xl shadow-indigo-200">
-            <RocketLaunchIcon className="w-10 h-10" />
-          </div>
-          <div className="space-y-2">
-            <h1 className="text-3xl font-bold text-slate-800">Launching...</h1>
-            <p className="text-slate-500 text-lg max-w-md mx-auto break-all">
-              Redirecting to <span className="font-mono text-indigo-600 font-medium">{redirectData.target}</span>
-            </p>
-          </div>
-          <div className="pt-4">
-             <a href={redirectData.target} className="text-sm text-slate-400 underline hover:text-slate-600">
-               Click here if you aren't redirected automatically
-             </a>
-          </div>
-        </div>
+      <div className="h-screen w-screen bg-white flex items-center justify-center">
+         {/* Totally clean interface. No 'App' UI. */}
+         <title>Redirecting...</title>
       </div>
     );
   }
 
-  // --- RENDER: DASHBOARD MODE ---
+  // --- RENDER: NOT FOUND ---
+  if (mode === AppMode.NOT_FOUND) {
+    return (
+      <div className="h-screen w-screen flex flex-col items-center justify-center bg-slate-50 text-center p-4">
+        <ExclamationTriangleIcon className="w-16 h-16 text-slate-300 mb-4" />
+        <h1 className="text-2xl font-bold text-slate-800">Link Not Found</h1>
+        <p className="text-slate-500 mt-2">The shortcut you used is invalid or has been removed.</p>
+        <a href="/" className="mt-8 text-indigo-600 hover:text-indigo-800 text-sm font-medium">Go Home</a>
+      </div>
+    );
+  }
+
+  // --- RENDER: DASHBOARD (Admin Only) ---
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans">
       {/* Header */}
@@ -223,8 +230,7 @@ const App: React.FC = () => {
             <div>
               <h3 className="text-sm font-semibold text-amber-800">Preview Mode Detected</h3>
               <p className="text-sm text-amber-700 mt-1">
-                You are running in a temporary "blob" environment. Links created here will not persist if you close this tab. 
-                For the best local experience, download `index.html` and run it locally on your machine.
+                You are running in a temporary environment. Download the code to run locally.
               </p>
             </div>
           </div>
@@ -236,7 +242,7 @@ const App: React.FC = () => {
             <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400 group-focus-within:text-indigo-500 transition-colors" />
             <input 
               type="text"
-              placeholder="Search links, slugs, or tags..."
+              placeholder="Search links..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none shadow-sm transition-all"
@@ -256,6 +262,7 @@ const App: React.FC = () => {
                 link={link} 
                 onDelete={handleDelete} 
                 baseUrl={baseUrl}
+                gaConfigured={!!settings.googleAnalyticsId}
               />
             ))}
           </div>
@@ -266,16 +273,14 @@ const App: React.FC = () => {
             </div>
             <h3 className="text-slate-900 font-bold text-lg">No links found</h3>
             <p className="text-slate-500 mt-1 mb-6 max-w-sm mx-auto">
-              {searchQuery ? "Try adjusting your search query." : "Create your first local shortcut to get started."}
+              Create your first local shortcut to get started.
             </p>
-            {!searchQuery && (
-              <button 
-                onClick={() => setIsModalOpen(true)}
-                className="inline-flex items-center gap-2 text-indigo-600 font-bold hover:text-indigo-700 bg-indigo-50 px-4 py-2 rounded-lg hover:bg-indigo-100 transition-colors"
-              >
-                Create one now &rarr;
-              </button>
-            )}
+            <button 
+              onClick={() => setIsModalOpen(true)}
+              className="inline-flex items-center gap-2 text-indigo-600 font-bold hover:text-indigo-700 bg-indigo-50 px-4 py-2 rounded-lg hover:bg-indigo-100 transition-colors"
+            >
+              Create one now &rarr;
+            </button>
           </div>
         )}
         
