@@ -57,3 +57,14 @@ export const getSettings = (): AppSettings => {
 export const saveSettings = (settings: AppSettings): void => {
   localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
 };
+
+export const downloadDB = (): void => {
+  const links = getLinks();
+  const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(links, null, 2));
+  const downloadAnchorNode = document.createElement('a');
+  downloadAnchorNode.setAttribute("href", dataStr);
+  downloadAnchorNode.setAttribute("download", "db.json");
+  document.body.appendChild(downloadAnchorNode);
+  downloadAnchorNode.click();
+  downloadAnchorNode.remove();
+};

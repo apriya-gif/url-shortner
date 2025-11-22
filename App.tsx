@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { PlusIcon, MagnifyingGlassIcon, RocketLaunchIcon, ExclamationTriangleIcon, Cog6ToothIcon } from '@heroicons/react/24/outline';
+import { PlusIcon, MagnifyingGlassIcon, RocketLaunchIcon, ExclamationTriangleIcon, Cog6ToothIcon, ArrowPathIcon } from '@heroicons/react/24/outline';
 import { ShortLink, AppSettings } from './types';
 import { getLinks, saveLink, deleteLink, incrementClicks, getSettings, saveSettings } from './services/storage';
 import { LinkCard } from './components/LinkCard';
@@ -7,12 +7,13 @@ import { CreateLinkModal } from './components/CreateLinkModal';
 import { SettingsModal } from './components/SettingsModal';
 
 enum AppMode {
+  LOADING,
   DASHBOARD,
   REDIRECTING
 }
 
 const App: React.FC = () => {
-  const [mode, setMode] = useState<AppMode>(AppMode.DASHBOARD);
+  const [mode, setMode] = useState<AppMode>(AppMode.LOADING);
   const [links, setLinks] = useState<ShortLink[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -24,71 +25,103 @@ const App: React.FC = () => {
   const [isBlob, setIsBlob] = useState(false);
   const [redirectData, setRedirectData] = useState<{target: string, slug: string} | null>(null);
 
-  // Initial Load & Routing Logic
+  // --- INITIALIZATION SEQUENCE ---
   useEffect(() => {
-    // 1. Load Settings
-    const loadedSettings = getSettings();
-    setSettings(loadedSettings);
+    const initApp = async () => {
+      // 1. Load Settings
+      const loadedSettings = getSettings();
+      setSettings(loadedSettings);
 
-    // 2. Determine Base URL (Cleaned)
-    // We use origin + pathname to get the file path or domain without query/hash
-    const fullLocation = window.location.href;
-    const cleanBase = fullLocation.split('#')[0].split('?')[0];
-    
-    setDetectedUrl(cleanBase);
-    setIsBlob(fullLocation.startsWith('blob:'));
+      // 2. Detect URL Environment
+      const fullLocation = window.location.href;
+      const cleanBase = fullLocation.split('#')[0].split('?')[0];
+      setDetectedUrl(cleanBase);
+      setIsBlob(fullLocation.startsWith('blob:'));
 
-    // 3. Hash Redirect Logic
-    const handleHashCheck = () => {
-      // Decode the hash to handle special characters if any
-      const rawHash = window.location.hash.substring(1);
-      if (!rawHash) return;
-
-      const hash = decodeURIComponent(rawHash);
+      // 3. Load Data (Merge LocalStorage + db.json)
+      // This allows the app to work on a static host (GitHub Pages) for recruiters
+      let mergedLinks = getLinks(); // Start with LocalStorage
       
-      const allLinks = getLinks();
-      const match = allLinks.find(l => l.slug === hash);
-      
-      if (match) {
-        console.log("Redirecting to:", match.originalUrl);
-        setMode(AppMode.REDIRECTING);
-        setRedirectData({ target: match.originalUrl, slug: match.slug });
-        
-        // Perform Redirect Logic
-        incrementClicks(match.id);
-        
-        // Small delay for UX so they see the "Redirecting" screen briefly
-        setTimeout(() => {
-             // Use assign or replace to navigate
-             window.location.replace(match.originalUrl);
-        }, 800);
+      try {
+        const response = await fetch('./db.json');
+        if (response.ok) {
+          const staticLinks: ShortLink[] = await response.json();
+          // Merge logic: Create a map by ID. 
+          // If we have local data (User), it overrides static.
+          // If we are a Recruiter (no local data), we get static.
+          const linkMap = new Map<string, ShortLink>();
+          
+          staticLinks.forEach(l => linkMap.set(l.id, l));
+          mergedLinks.forEach(l => linkMap.set(l.id, l)); // Local wins conflicts
+          
+          mergedLinks = Array.from(linkMap.values());
+        }
+      } catch (e) {
+        // If db.json is missing (local dev), just ignore
       }
+
+      // Sort by newest first
+      mergedLinks.sort((a, b) => b.createdAt - a.createdAt);
+      setLinks(mergedLinks);
+
+      // 4. Check for Redirect Hash
+      // We do this AFTER loading data so we can find links from db.json
+      const rawHash = window.location.hash.substring(1);
+      if (rawHash) {
+        const hash = decodeURIComponent(rawHash);
+        const match = mergedLinks.find(l => l.slug === hash);
+        
+        if (match) {
+          setRedirectData({ target: match.originalUrl, slug: match.slug });
+          setMode(AppMode.REDIRECTING);
+          
+          // Execute Redirect
+          incrementClicks(match.id);
+          setTimeout(() => {
+             window.location.replace(match.originalUrl);
+          }, 800);
+          return; // Stop here, don't show dashboard
+        }
+      }
+
+      // If no redirect, show dashboard
+      setMode(AppMode.DASHBOARD);
     };
 
-    // Run check immediately on mount
-    handleHashCheck();
+    initApp();
 
-    // Run check whenever the hash changes (e.g. user clicks a link on the page)
-    window.addEventListener('hashchange', handleHashCheck);
-
-    return () => {
-      window.removeEventListener('hashchange', handleHashCheck);
+    // Listen for hash changes while the app is open
+    const handleRuntimeHashChange = () => {
+       const rawHash = window.location.hash.substring(1);
+       if(!rawHash) return;
+       // Reload page to trigger full init cycle is safest, or just check links state
+       window.location.reload(); 
     };
+    window.addEventListener('hashchange', handleRuntimeHashChange);
+    return () => window.removeEventListener('hashchange', handleRuntimeHashChange);
   }, []);
 
+
+  // --- ACTIONS ---
+
   const refreshLinks = () => {
-    setLinks(getLinks());
+    // We only refresh from LocalStorage here because db.json is static
+    // Ideally we would re-merge, but for local editing, local storage is enough.
+    const local = getLinks();
+    setLinks(prev => {
+        // Keep static links that aren't in local, update local ones
+        // This is a simplified merge for the UI update
+        const linkMap = new Map<string, ShortLink>();
+        prev.forEach(l => linkMap.set(l.id, l));
+        local.forEach(l => linkMap.set(l.id, l));
+        return Array.from(linkMap.values()).sort((a, b) => b.createdAt - a.createdAt);
+    });
   };
 
   const handleSaveSettings = (newSettings: AppSettings) => {
     saveSettings(newSettings);
     setSettings(newSettings);
   };
-
-  // Load links on mount
-  useEffect(() => {
-    refreshLinks();
-  }, []);
 
   const handleCreate = (newLink: ShortLink) => {
     saveLink(newLink);
@@ -114,6 +147,16 @@ const App: React.FC = () => {
 
   // Use Custom URL if set, otherwise detected URL
   const baseUrl = settings.customBaseUrl || detectedUrl;
+
+
+  // --- RENDER: LOADING ---
+  if (mode === AppMode.LOADING) {
+      return (
+          <div className="h-screen w-screen flex items-center justify-center bg-slate-50">
+              <ArrowPathIcon className="w-8 h-8 text-slate-400 animate-spin" />
+          </div>
+      );
+  }
 
   // --- RENDER: REDIRECT MODE ---
   if (mode === AppMode.REDIRECTING && redirectData) {
@@ -156,7 +199,7 @@ const App: React.FC = () => {
             <button 
               onClick={() => setIsSettingsOpen(true)}
               className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
-              title="Settings"
+              title="Settings & Deploy"
             >
               <Cog6ToothIcon className="w-6 h-6" />
             </button>
