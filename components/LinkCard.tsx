@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { ShortLink } from '../types';
-import { ArrowTopRightOnSquareIcon, ClipboardDocumentIcon, TrashIcon, ChartBarIcon, LinkIcon, CheckIcon } from '@heroicons/react/24/outline';
+import { ArrowTopRightOnSquareIcon, ClipboardDocumentIcon, TrashIcon, ChartBarIcon, CheckIcon } from '@heroicons/react/24/outline';
 
 interface LinkCardProps {
   link: ShortLink;
@@ -14,9 +14,17 @@ export const LinkCard: React.FC<LinkCardProps> = ({ link, onDelete, baseUrl }) =
   // The functional URL that works when clicked or copied
   const fullShortUrl = `${baseUrl}#${link.slug}`;
   
-  // The display URL - we make it look nice even if the base URL is huge
+  // Clean up display URL logic
+  let displayDomain = baseUrl;
+  try {
+    const urlObj = new URL(baseUrl);
+    displayDomain = urlObj.hostname + (urlObj.pathname !== '/' ? urlObj.pathname : '');
+  } catch (e) {
+    // If invalid URL or relative, just keep as is
+    displayDomain = baseUrl.replace(/^https?:\/\//, '');
+  }
+
   const isBlob = baseUrl.startsWith('blob:');
-  const displayUrl = isBlob ? '/#hash' : '/#' + link.slug;
 
   const handleCopy = () => {
     navigator.clipboard.writeText(fullShortUrl);
@@ -48,7 +56,11 @@ export const LinkCard: React.FC<LinkCardProps> = ({ link, onDelete, baseUrl }) =
                 Short
               </span>
               <span className="font-mono text-slate-700 text-sm font-semibold truncate flex-1" title={fullShortUrl}>
-                {isBlob ? <span className="text-slate-400">preview</span> : <span className="text-slate-400">local</span>}
+                {isBlob ? (
+                    <span className="text-slate-400">preview</span>
+                ) : (
+                    <span className="text-slate-400">{displayDomain}/</span>
+                )}
                 <span className="text-indigo-600">#{link.slug}</span>
               </span>
             </div>

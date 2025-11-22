@@ -1,6 +1,7 @@
-import { ShortLink } from '../types';
+import { ShortLink, AppSettings } from '../types';
 
 const STORAGE_KEY = 'macshorty_links_v1';
+const SETTINGS_KEY = 'macshorty_settings_v1';
 
 export const getLinks = (): ShortLink[] => {
   try {
@@ -42,4 +43,17 @@ export const incrementClicks = (id: string): void => {
 export const checkSlugExists = (slug: string, excludeId?: string): boolean => {
   const links = getLinks();
   return links.some(l => l.slug === slug && l.id !== excludeId);
+};
+
+export const getSettings = (): AppSettings => {
+  try {
+    const stored = localStorage.getItem(SETTINGS_KEY);
+    return stored ? JSON.parse(stored) : {};
+  } catch (e) {
+    return {};
+  }
+};
+
+export const saveSettings = (settings: AppSettings): void => {
+  localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
 };

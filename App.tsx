@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { PlusIcon, MagnifyingGlassIcon, RocketLaunchIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
-import { ShortLink } from './types';
-import { getLinks, saveLink, deleteLink, incrementClicks } from './services/storage';
+import { PlusIcon, MagnifyingGlassIcon, RocketLaunchIcon, ExclamationTriangleIcon, Cog6ToothIcon } from '@heroicons/react/24/outline';
+import { ShortLink, AppSettings } from './types';
+import { getLinks, saveLink, deleteLink, incrementClicks, getSettings, saveSettings } from './services/storage';
 import { LinkCard } from './components/LinkCard';
 import { CreateLinkModal } from './components/CreateLinkModal';
+import { SettingsModal } from './components/SettingsModal';
 
 enum AppMode {
   DASHBOARD,
@@ -14,22 +15,30 @@ const App: React.FC = () => {
   const [mode, setMode] = useState<AppMode>(AppMode.DASHBOARD);
   const [links, setLinks] = useState<ShortLink[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [baseUrl, setBaseUrl] = useState('');
+  
+  const [detectedUrl, setDetectedUrl] = useState('');
+  const [settings, setSettings] = useState<AppSettings>({});
+  
   const [isBlob, setIsBlob] = useState(false);
   const [redirectData, setRedirectData] = useState<{target: string, slug: string} | null>(null);
 
   // Initial Load & Routing Logic
   useEffect(() => {
-    // 1. Determine Base URL (Cleaned)
+    // 1. Load Settings
+    const loadedSettings = getSettings();
+    setSettings(loadedSettings);
+
+    // 2. Determine Base URL (Cleaned)
     // We use origin + pathname to get the file path or domain without query/hash
     const fullLocation = window.location.href;
     const cleanBase = fullLocation.split('#')[0].split('?')[0];
     
-    setBaseUrl(cleanBase);
+    setDetectedUrl(cleanBase);
     setIsBlob(fullLocation.startsWith('blob:'));
 
-    // 2. Hash Redirect Logic
+    // 3. Hash Redirect Logic
     const handleHashCheck = () => {
       // Decode the hash to handle special characters if any
       const rawHash = window.location.hash.substring(1);
@@ -71,6 +80,11 @@ const App: React.FC = () => {
     setLinks(getLinks());
   };
 
+  const handleSaveSettings = (newSettings: AppSettings) => {
+    saveSettings(newSettings);
+    setSettings(newSettings);
+  };
+
   // Load links on mount
   useEffect(() => {
     refreshLinks();
@@ -97,6 +111,9 @@ const App: React.FC = () => {
       l.tags?.some(t => t.toLowerCase().includes(lower))
     );
   }, [links, searchQuery]);
+
+  // Use Custom URL if set, otherwise detected URL
+  const baseUrl = settings.customBaseUrl || detectedUrl;
 
   // --- RENDER: REDIRECT MODE ---
   if (mode === AppMode.REDIRECTING && redirectData) {
@@ -135,7 +152,14 @@ const App: React.FC = () => {
             <span className="text-xl font-bold text-slate-800 tracking-tight">MacShorty</span>
           </div>
           
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2 sm:gap-4">
+            <button 
+              onClick={() => setIsSettingsOpen(true)}
+              className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+              title="Settings"
+            >
+              <Cog6ToothIcon className="w-6 h-6" />
+            </button>
             <button 
               onClick={() => setIsModalOpen(true)}
               className="hidden sm:flex items-center gap-2 bg-slate-900 hover:bg-slate-800 text-white px-4 py-2 rounded-lg text-sm font-medium transition-all shadow-lg shadow-slate-900/20 active:scale-95"
@@ -226,6 +250,14 @@ const App: React.FC = () => {
         onClose={() => setIsModalOpen(false)}
         onSave={handleCreate}
         baseUrl={baseUrl}
+      />
+
+      <SettingsModal 
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        settings={settings}
+        onSave={handleSaveSettings}
+        detectedUrl={detectedUrl}
       />
     </div>
   );

@@ -14,3 +14,7 @@ export interface GeminiSuggestion {
   description: string;
   tags: string[];
 }
+
+export interface AppSettings {
+  customBaseUrl?: string;
+}
