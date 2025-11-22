@@ -1,0 +1,5 @@
+{
+  "name": "MacShorty",
+  "description": "A private, local-first URL shortener and bookmark manager for your MacBook, powered by Gemini for smart tagging.",
+  "requestFramePermissions": []
+}
