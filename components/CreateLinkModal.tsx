@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { XMarkIcon, SparklesIcon, CheckCircleIcon, ClipboardDocumentIcon, ClipboardDocumentCheckIcon, ArrowPathIcon } from '@heroicons/react/24/outline';
-import { generateLinkMetadata } from '../services/gemini';
+import { XMarkIcon, CheckCircleIcon, ClipboardDocumentIcon, ClipboardDocumentCheckIcon, ArrowPathIcon } from '@heroicons/react/24/outline';
 import { ShortLink } from '../types';
 import { checkSlugExists } from '../services/storage';
 
@@ -15,7 +14,6 @@ export const CreateLinkModal: React.FC<CreateLinkModalProps> = ({ isOpen, onClos
   const [url, setUrl] = useState('');
   const [slug, setSlug] = useState('');
   const [description, setDescription] = useState('');
-  const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState('');
   const [createdLink, setCreatedLink] = useState<ShortLink | null>(null);
   const [hasCopied, setHasCopied] = useState(false);
@@ -37,7 +35,6 @@ export const CreateLinkModal: React.FC<CreateLinkModalProps> = ({ isOpen, onClos
       setSlug('');
       setDescription('');
       setError('');
-      setIsGenerating(false);
       setCreatedLink(null);
       setHasCopied(false);
     } else {
@@ -54,29 +51,6 @@ export const CreateLinkModal: React.FC<CreateLinkModalProps> = ({ isOpen, onClos
 
   const regenerateSlug = () => {
     setSlug(generateHashSlug());
-  };
-
-  const handleAIAutoFill = async () => {
-    if (!url) {
-      setError("Please enter a URL first.");
-      return;
-    }
-    
-    try {
-      setError('');
-      setIsGenerating(true);
-      const suggestion = await generateLinkMetadata(url);
-      
-      // We only use description and tags from AI now
-      setDescription(suggestion.description);
-      // If slug is somehow empty (user cleared it), fill it
-      if (!slug) setSlug(generateHashSlug());
-      
-    } catch (e) {
-      setError("Failed to generate suggestions. Try manual entry.");
-    } finally {
-      setIsGenerating(false);
-    }
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -179,30 +153,15 @@ export const CreateLinkModal: React.FC<CreateLinkModalProps> = ({ isOpen, onClos
             <form onSubmit={handleSubmit} className="p-6 space-y-5">
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Destination URL</label>
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    required
-                    placeholder="https://example.com/very/long/url..."
-                    value={url}
-                    onChange={(e) => setUrl(e.target.value)}
-                    onBlur={handleUrlBlur}
-                    className="flex-1 px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
-                  />
-                  <button
-                    type="button"
-                    onClick={handleAIAutoFill}
-                    disabled={isGenerating || !url}
-                    className="px-4 py-2 bg-indigo-50 text-indigo-600 rounded-xl hover:bg-indigo-100 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium flex items-center gap-2"
-                  >
-                    {isGenerating ? (
-                      <div className="w-5 h-5 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
-                    ) : (
-                      <SparklesIcon className="w-5 h-5" />
-                    )}
-                    <span className="hidden sm:inline">Auto-Fill</span>
-                  </button>
-                </div>
+                <input
+                  type="text"
+                  required
+                  placeholder="https://example.com/very/long/url..."
+                  value={url}
+                  onChange={(e) => setUrl(e.target.value)}
+                  onBlur={handleUrlBlur}
+                  className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
+                />
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
